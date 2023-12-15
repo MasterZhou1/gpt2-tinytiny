@@ -2,12 +2,12 @@ from datasets import load_dataset
 from transformers import GPT2Tokenizer
 import os
 import torch
-
+import time
 
 def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
     # Create the save folder if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
-
+    t0 = time.time()
     # List to store preprocessed text tensors
     processed_tensors = []
 
@@ -30,7 +30,8 @@ def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
     # Save the final tensor to a file
     save_file_path = os.path.join(save_path, save_name)
     torch.save(final_tensor, save_file_path)
-    print('Process finished.')
+    t1 = time.time()
+    print(f'Process finished with {t1-t0:.3f} seconds.')
 
 
 if __name__ == '__main__':
@@ -42,22 +43,8 @@ if __name__ == '__main__':
     train_data = dataset['train']
     validation_data = dataset['validation']
     test_data = dataset['test']
-    # Example: Print the first 5 examples from the training set
-    # for i in range(5):
-    #     text = train_data[i]['text']
-    #
-    #     # Encode the text
-    #     input_ids = tokenizer.encode(text, return_tensors="pt")
-    #
-    #     # Decode the encoded input_ids back to text
-    #     decoded_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
-    #
-    #     # Print the results
-    #     print("Original Text:", text)
-    #     print("Encoded Input IDs:", input_ids)
-    #     print("Decoded Text:", decoded_text)
-    #     print('\n'+'---'*5+'\n')
 
-    preprocess_and_save(train_data, tokenizer, save_name='train_data.pt')
     preprocess_and_save(validation_data, tokenizer, save_name='validation_data.pt')
     preprocess_and_save(test_data, tokenizer, save_name='test_data.pt')
+    preprocess_and_save(train_data, tokenizer, save_name='train_data.pt')
+

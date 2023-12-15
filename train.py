@@ -7,8 +7,7 @@ import math
 
 out_dir = './out'
 # Create the directory if it doesn't exist
-if not os.path.exists(out_dir):
-    os.makedirs(out_dir)
+os.makedirs(out_dir, exist_ok=True)
 eval_interval = 200
 log_interval = 1
 eval_iters = 200

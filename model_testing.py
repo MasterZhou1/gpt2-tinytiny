@@ -4,7 +4,7 @@ from model import GPT, GPTConfig
 import time
 
 
-tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+# tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
 # ids_test = train_data[:100]
 # print(ids_test)
@@ -12,7 +12,7 @@ tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 # print(len(train_data))
 
 # -----------------------------------------------------------------------------
-profile = True
+profile = False
 real_data = True
 batch_size = 6
 block_size = 512
@@ -70,7 +70,7 @@ if profile:
     num_steps = wait + warmup + active
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            # gpu utilization info cannot be seen on tensorboard, it's a bug
+            # gpu utilization info cannot be seen on tensorboard on Windows, it's a bug for tensorboard
         schedule=torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=1),
         on_trace_ready=torch.profiler.tensorboard_trace_handler('./bench_log'),
         record_shapes=False,

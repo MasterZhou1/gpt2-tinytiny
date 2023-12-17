@@ -8,12 +8,12 @@ import math
 out_dir = './out'
 # Create the directory if it doesn't exist
 os.makedirs(out_dir, exist_ok=True)
-eval_interval = 200
+eval_interval = 100
 log_interval = 1
 eval_iters = 200
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
-init_from = 'scratch'  # 'scratch' or 'resume'
+init_from = 'resume'  # 'scratch' or 'resume'
 # wandb logging
 wandb_log = True  # disabled by default
 wandb_project = 'gpt2-wikitext'
@@ -30,15 +30,15 @@ dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
 learning_rate = 6e-4  # max learning rate
-max_iters = 200000  # total number of training iterations
+max_iters = 20000  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True  # whether to decay the learning rate
-warmup_iters = 1500  # how many steps to warm up for
-lr_decay_iters = 200000  # should be ~= max_iters per Chinchilla
+warmup_iters = 1200  # how many steps to warm up for
+lr_decay_iters = 20000  # should be ~= max_iters per Chinchilla
 min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # system
 device = 'cuda'  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
@@ -88,7 +88,7 @@ elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
@@ -234,7 +234,7 @@ while True:
         if local_iter_num >= 5:  # let the training loop settle a bit
             mfu = model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt * 1000:.2f}ms, mfu {running_mfu * 100:.2f}%")
+        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt:.2f}s, mfu {running_mfu * 100:.2f}%")
     iter_num += 1
     local_iter_num += 1
 

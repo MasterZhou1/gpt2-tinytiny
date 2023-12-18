@@ -7,9 +7,9 @@ from contextlib import nullcontext
 import time
 import math
 
-model_type = 'pretrain' # pretrain or lora
+model_type = 'pretrain'  # pretrain or lora
 out_dir = './out/sft'
-init_from = 'sft_scratch' # sft_scratch or sft_resume
+init_from = 'sft_scratch'  # sft_scratch or sft_resume
 # Create the directory if it doesn't exist
 os.makedirs(out_dir, exist_ok=True)
 eval_interval = 100
@@ -22,7 +22,7 @@ wandb_log = True  # disabled by default
 wandb_project = 'gpt2-Tulu-sft'
 wandb_run_name = f'gpt2 sft {time.time()}'  # 'run' + str(time.time())
 # data
-gradient_accumulation_steps = 5*8  # used to simulate larger batch sizes
+gradient_accumulation_steps = 5 * 8  # used to simulate larger batch sizes
 batch_size = 12  # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 256
 # model
@@ -31,9 +31,9 @@ n_head = 4
 n_embd = 384
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
-lora_attn_dim = 32 # lora attn dimension
-lora_attn_alpha = 64 # lora attn alpha
-lora_dropout = 0.0 # dropout probability for lora layers
+lora_attn_dim = 32  # lora attn dimension
+lora_attn_alpha = 64  # lora attn alpha
+lora_dropout = 0.0  # dropout probability for lora layers
 # adamw optimizer
 learning_rate = 6e-4  # max learning rate
 max_iters = 20000  # total number of training iterations
@@ -74,6 +74,7 @@ sft_train, sft_validation = random_split(sft_data, [train_size, val_size])
 sft_train_q, sft_train_a = zip(*sft_train)
 sft_validation_q, sft_validation_a = zip(*sft_validation)
 
+
 def get_batch(split):
     q = sft_train_q if split == 'train' else sft_validation_q
     a = sft_train_a if split == 'train' else sft_validation_a
@@ -85,41 +86,47 @@ def get_batch(split):
     return x, y
 
 
-# init these up here, can override if init_from='resume' (i.e. from a checkpoint)
-iter_num = 0
-best_val_loss = 1e9
+
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
                   bias=bias, vocab_size=None, dropout=dropout)  # start with model_args from command line
 
-
 print(f"SFT training from {out_dir}")
-# loading pretrain gpt2 model
-ckpt_path = os.path.join(out_dir, 'ckpt_pretrain.pt')
-checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
-checkpoint_model_args = checkpoint['model_args']
-# force these config attributes to be equal otherwise we can't even resume training
-# the rest of the attributes (e.g. dropout) can stay as desired from command line
-for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-    model_args[k] = checkpoint_model_args[k]
-# create the model
-gptconf = GPTConfig(**model_args, model_type=model_type,
-                    lora_attn_dim=lora_attn_dim, lora_attn_alpha=lora_attn_alpha, lora_dropout=lora_dropout)
-model = GPT(gptconf)
-state_dict = checkpoint['model']
-# fix the keys of the state dictionary :(
-# honestly no idea how checkpoints sometimes get this prefix, have to debug more
-unwanted_prefix = '_orig_mod.'
-for k, v in list(state_dict.items()):
-    if k.startswith(unwanted_prefix):
-        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-model.load_weight(state_dict)
-checkpoint = None  # free up memory
 
-if init_from == 'sft_resume' and model_type == 'pretrain':
+
+# loading pretrain gpt2 model
+def load_pretrain(out_dir, model_pretrain):
+    ckpt_path = os.path.join(out_dir, model_pretrain)
+    checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
+    checkpoint_model_args = checkpoint['model_args']
+    # force these config attributes to be equal otherwise we can't even resume training
+    # the rest of the attributes (e.g. dropout) can stay as desired from command line
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    # create the model
+    gptconf = GPTConfig(**model_args, model_type=model_type,
+                        lora_attn_dim=lora_attn_dim, lora_attn_alpha=lora_attn_alpha, lora_dropout=lora_dropout)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    # fix the keys of the state dictionary :(
+    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_weight(state_dict)
+    return model
+
+# init these up here, can override if init_from='resume' (i.e. from a checkpoint)
+iter_num = 0
+best_val_loss = 1e9
+
+if init_from == 'sft_scratch':
+    model = load_pretrain(out_dir, 'ckpt_pretrain.pt')
+elif init_from == 'sft_resume' and model_type == 'pretrain':
     ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location='cpu')
     gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
     model = GPT(gptconf)
     state_dict = checkpoint['model']
@@ -127,14 +134,17 @@ if init_from == 'sft_resume' and model_type == 'pretrain':
     for k, v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
+    model.load_weight(state_dict)
+    iter_num = checkpoint['iter_num']
+    best_val_loss = checkpoint['best_val_loss']
 elif init_from == 'sft_resume' and model_type == 'lora':
-    lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft_lora.pt')
-    lora_w = torch.load(lora_ckpt_path, map_location='cpu')
+    model = load_pretrain(out_dir, 'ckpt_pretrain.pt')
+    lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
+    checkpoint = torch.load(lora_ckpt_path, map_location='cpu')
+    lora_w = checkpoint['model']
     model.load_state_dict(lora_w, strict=False)
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
-
 
 model.to(device)
 if lora_attn_dim > 0 and model_type == 'lora':
@@ -145,6 +155,7 @@ scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
+
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
@@ -213,7 +224,7 @@ while True:
             best_val_loss = losses['val']
             if iter_num > 0:
                 checkpoint = {
-                    'model': model.state_dict(),
+                    'model': model.state_dict() if model_type == 'pretrain' else lora.lora_state_dict(model),
                     'optimizer': optimizer.state_dict(),
                     'model_args': model_args,
                     'iter_num': iter_num,
@@ -221,10 +232,7 @@ while True:
                     'config': config,
                 }
                 print(f"saving checkpoint to {out_dir}")
-                if model_type == 'pretrain':
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt_sft.pt'))
-                elif model_type == 'lora':
-                    torch.save(lora.lora_state_dict(model), os.path.join(out_dir, 'ckpt_sft_lora.pt'))
+                torch.save(checkpoint, os.path.join(out_dir, 'ckpt_sft.pt'))
 
     if iter_num == 0 and eval_only:
         break

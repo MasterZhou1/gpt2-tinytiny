@@ -27,50 +27,35 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=device_type, dtype=ptdtype)
 
-# model
+# model loading
+def load_model(out_dir, model_file):
+    ckpt_path = os.path.join(out_dir, model_file)
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    gptconf = GPTConfig(**checkpoint['model_args'], model_type='pretrain')
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    return state_dict, model
 
 # init from a model saved in a specific directory
 if model_type == 'pretrain':
     out_dir = 'out'
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    state_dict, model = load_model(out_dir, 'ckpt.pt')
     model.load_state_dict(state_dict)
 elif model_type == 'sft':
     out_dir = './out/sft'
-    ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
+    state_dict, model = load_model(out_dir, 'ckpt_sft.pt')
+    model.load_weight(state_dict)
 elif model_type == 'lora':
     out_dir = './out/sft'
-    ckpt_path = os.path.join(out_dir, 'ckpt_pretrain.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    state_dict, model = load_model(out_dir, 'ckpt_pretrain.pt')
     model.load_weight(state_dict)
     lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft_lora.pt')
-    lora_w = torch.load(lora_ckpt_path, map_location='cpu')
+    lora_w = torch.load(lora_ckpt_path, map_location=device)
     model.load_state_dict(lora_w, strict=False)
-    iter_num = checkpoint['iter_num']
-    best_val_loss = checkpoint['best_val_loss']
 
 
 model.eval()

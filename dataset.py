@@ -2,6 +2,7 @@ from datasets import load_dataset
 from transformers import GPT2Tokenizer
 import os
 import torch
+import torch.nn.functional as F
 import time
 
 def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
@@ -55,8 +56,12 @@ def preprocess_and_save_sft(dataset, tokenizer, block_size, save_name, save_path
 
             # Check if the length exceeds block_size
             if len(input_ids) > block_size:
-                # Skip this example
+                # Skip this example or could try truncate
                 break
+            elif len(input_ids) < block_size:
+                # padding ids to block_size with 50303, which is the ignore_index set in cross entropy loss
+                num_pads = block_size - len(input_ids)
+                input_ids = F.pad(input_ids, (0, num_pads), value=50303)
 
             # Decide whether the example is a question (Q) or an answer (A)
             if role == "user":
@@ -66,6 +71,8 @@ def preprocess_and_save_sft(dataset, tokenizer, block_size, save_name, save_path
 
         # Append tokens to the main lists
         if q_tokens and a_tokens:
+            assert (len(q_tokens[0]) == block_size) and  (len(a_tokens[0]) == block_size), \
+                f'Q {len(q_tokens[0])} and A {len(a_tokens[0])} length didn\'t match block size'
             q_tensors.extend(q_tokens)
             a_tensors.extend(a_tokens)
 
@@ -76,7 +83,7 @@ def preprocess_and_save_sft(dataset, tokenizer, block_size, save_name, save_path
             # print(f'Number of examples for answers: {len(a_tensors)}')
 
     assert len(q_tensors) == len(a_tensors), \
-        f'Q {len(q_tensors)} and A {len(a_tensors)} size didn\'t match '
+        f'Q {len(q_tensors)} and A {len(a_tensors)} length didn\'t match'
 
     # Save the final tensors to files
     q_save_file_path = os.path.join(save_path, f'{save_name}_Q_sft.pt')
@@ -93,16 +100,16 @@ if __name__ == '__main__':
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
     # load pretrain dataset
-    dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
-
-    # Access the splits
-    train_data = dataset['train']
-    validation_data = dataset['validation']
-    test_data = dataset['test']
-
-    preprocess_and_save(validation_data, tokenizer, save_name='validation_data')
-    preprocess_and_save(test_data, tokenizer, save_name='test_data')
-    preprocess_and_save(train_data, tokenizer, save_name='train_data')
+    # dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+    #
+    # # Access the splits
+    # train_data = dataset['train']
+    # validation_data = dataset['validation']
+    # test_data = dataset['test']
+    #
+    # preprocess_and_save(validation_data, tokenizer, save_name='validation_data')
+    # preprocess_and_save(test_data, tokenizer, save_name='test_data')
+    # preprocess_and_save(train_data, tokenizer, save_name='train_data')
 
     # load sft dataset
     dataset = load_dataset("arazd/tulu_cot")

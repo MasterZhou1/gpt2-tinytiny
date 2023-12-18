@@ -3,7 +3,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
 import math
-
+import loralib as lora
+import copy
 torch.manual_seed(1337)
 
 
@@ -16,6 +17,10 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = False  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    model_type: str = 'pretrain'
+    lora_attn_dim: int = 0
+    lora_attn_alpha: int = 128
+    lora_dropout: float = 0.0
 
 
 class CausalSelfAttention(nn.Module):
@@ -24,7 +29,23 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0, 'n_embd must be divisible by n_head'
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+
+        # vanilla version of calculating attention q,k,v
+        if config.model_type == 'pretrain':
+            self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+
+        elif config.model_type == 'lora':
+            # use lora to do so
+            self.c_attn = lora.MergedLinear(
+                config.n_embd, 3 * config.n_embd,
+                r=config.lora_attn_dim,
+                lora_alpha=config.lora_attn_alpha,
+                lora_dropout=config.lora_dropout,
+                enable_lora=[True, False, True],
+                fan_in_fan_out=True,
+                merge_weights=False,
+                bias=config.bias
+            )
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
@@ -44,6 +65,7 @@ class CausalSelfAttention(nn.Module):
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
@@ -119,7 +141,7 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),  # weights of token embedding
+            wte = nn.Embedding(config.vocab_size, config.n_embd, padding_idx=50303),  # weights of token embedding
             wpe = nn.Embedding(config.block_size, config.n_embd),  # weights of position embedding
             # using learned position embedding instead of absolute/fixed position embedding in the transformer paper
             drop = nn.Dropout(config.dropout),
@@ -182,7 +204,10 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=50303)
+            # set ignore_index to 50303=vocab_size-1 with vocab_size=50304 used in model, which is larger than
+            # original GPT2 vocab_size 50257, so this would work.
+            # Can try other methods to handle padding issues like using mask
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
@@ -267,3 +292,36 @@ class GPT(nn.Module):
         flops_promised = 5.4e12  # Peak FLOPS for GTX 1660 Ti in FP32 (TFLOPS), change this value to your own GPU type
         mfu = flops_achieved / flops_promised
         return mfu
+
+    def load_weight(self, state_dict):
+        if 'model_state_dict' in state_dict:
+            state_dict = state_dict['model_state_dict']
+
+        state_dict_tmp = copy.deepcopy(state_dict)
+        old_keys = []
+        new_keys = []
+        for key in state_dict_tmp:
+            new_key = None
+            if key.endswith(".g"):
+                new_key = key[:-2] + ".weight"
+            elif key.endswith(".b"):
+                new_key = key[:-2] + ".bias"
+            elif key.endswith(".w"):
+                new_key = key[:-2] + ".weight"
+
+            if key.startswith("module.transformer."):
+                new_key = key[len("module.transformer."):]
+
+            if new_key:
+                old_keys.append(key)
+                new_keys.append(new_key)
+
+        for old_key, new_key in zip(old_keys, new_keys):
+            state_dict[new_key] = state_dict.pop(old_key)
+
+        for n, p in self.transformer.named_parameters():
+            if n not in state_dict:
+                state_dict[n] = p
+
+        self.transformer.load_state_dict(state_dict, strict=False)
+        self.transformer.wte.weight = self.lm_head.weight

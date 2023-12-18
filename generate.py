@@ -8,12 +8,11 @@ from transformers import GPT2Tokenizer
 from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
-model_type = 'pretrain' # the type of model used for generate new sentences. 'pretrain' or 'sft'
-out_dir = 'out'
-start = "One plus one is" # Can also specify a file, use as: "FILE:prompt.txt"
+model_type = 'pretrain' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'sft'
+start = "The white house is located in" # Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 5 # number of samples to draw
-max_new_tokens = 32 # number of tokens generated in each sample
-temperature = 1.2 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
+max_new_tokens = 64 # number of tokens generated in each sample
+temperature = 0.9 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 200 # retain only the top_k most likely tokens, clamp others to have 0 probability
 seed = 1337
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
@@ -32,19 +31,46 @@ ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=devi
 
 # init from a model saved in a specific directory
 if model_type == 'pretrain':
+    out_dir = 'out'
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
 elif model_type == 'sft':
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-
-checkpoint = torch.load(ckpt_path, map_location=device)
-gptconf = GPTConfig(**checkpoint['model_args'])
-model = GPT(gptconf)
-state_dict = checkpoint['model']
-unwanted_prefix = '_orig_mod.'
-for k,v in list(state_dict.items()):
-    if k.startswith(unwanted_prefix):
-        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-model.load_state_dict(state_dict)
+    out_dir = './out/sft'
+    ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
+elif model_type == 'lora':
+    out_dir = './out/sft'
+    ckpt_path = os.path.join(out_dir, 'ckpt_pretrain.pt')
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
+    model = GPT(gptconf)
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_weight(state_dict)
+    lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft_lora.pt')
+    lora_w = torch.load(lora_ckpt_path, map_location='cpu')
+    model.load_state_dict(lora_w, strict=False)
+    iter_num = checkpoint['iter_num']
+    best_val_loss = checkpoint['best_val_loss']
 
 
 model.eval()

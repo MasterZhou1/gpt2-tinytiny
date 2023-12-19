@@ -9,7 +9,7 @@ import math
 
 model_type = 'pretrain'  # pretrain or lora
 out_dir = './out/sft'
-init_from = 'sft_scratch'  # sft_scratch or sft_resume
+init_from = 'sft_resume'  # sft_scratch or sft_resume
 # Create the directory if it doesn't exist
 os.makedirs(out_dir, exist_ok=True)
 eval_interval = 100
@@ -43,7 +43,7 @@ beta2 = 0.95
 grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True  # whether to decay the learning rate
-warmup_iters = 1000  # how many steps to warm up for
+warmup_iters = 700  # how many steps to warm up for
 lr_decay_iters = 20000  # should be ~= max_iters per Chinchilla
 min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # system
@@ -86,17 +86,15 @@ def get_batch(split):
     return x, y
 
 
-
+print(f"SFT training from {out_dir}")
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout)  # start with model_args from command line
-
-print(f"SFT training from {out_dir}")
-
+                      bias=bias, vocab_size=50304, dropout=dropout)  # start with model_args from command line
 
 # loading pretrain gpt2 model
-def load_pretrain(out_dir, model_pretrain):
+def load_pretrain(out_dir, model_pretrain, model_type='pretrain'):
+
     ckpt_path = os.path.join(out_dir, model_pretrain)
     checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
     checkpoint_model_args = checkpoint['model_args']
@@ -104,6 +102,7 @@ def load_pretrain(out_dir, model_pretrain):
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = checkpoint_model_args[k]
+    print(model_args)
     # create the model
     gptconf = GPTConfig(**model_args, model_type=model_type,
                         lora_attn_dim=lora_attn_dim, lora_attn_alpha=lora_attn_alpha, lora_dropout=lora_dropout)
@@ -115,30 +114,40 @@ def load_pretrain(out_dir, model_pretrain):
     for k, v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_weight(state_dict)
+    if model_type == 'lora':
+        model.load_weight(state_dict)
+    elif model_type == 'pretrain':
+        model.load_state_dict(state_dict)
     return model
+
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
 
 if init_from == 'sft_scratch':
-    model = load_pretrain(out_dir, 'ckpt_pretrain.pt')
+    model = load_pretrain(out_dir, 'ckpt_pretrain.pt', model_type)
 elif init_from == 'sft_resume' and model_type == 'pretrain':
     ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
     checkpoint = torch.load(ckpt_path, map_location='cpu')
-    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
+    checkpoint_model_args = checkpoint['model_args']
+    # force these config attributes to be equal otherwise we can't even resume training
+    # the rest of the attributes (e.g. dropout) can stay as desired from command line
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    print(model_args)
+    gptconf = GPTConfig(**model_args, model_type=model_type)
     model = GPT(gptconf)
     state_dict = checkpoint['model']
     unwanted_prefix = '_orig_mod.'
     for k, v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_weight(state_dict)
+    model.load_state_dict(state_dict)
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
 elif init_from == 'sft_resume' and model_type == 'lora':
-    model = load_pretrain(out_dir, 'ckpt_pretrain.pt')
+    model = load_pretrain(out_dir, 'ckpt_pretrain.pt', model_type)
     lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
     checkpoint = torch.load(lora_ckpt_path, map_location='cpu')
     lora_w = checkpoint['model']

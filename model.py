@@ -294,6 +294,7 @@ class GPT(nn.Module):
         return mfu
 
     def load_weight(self, state_dict):
+        # only load the transformer part of model not LMHead, which  needs to be replaced and finetuned
         if 'model_state_dict' in state_dict:
             state_dict = state_dict['model_state_dict']
 
@@ -324,4 +325,7 @@ class GPT(nn.Module):
                 state_dict[n] = p
 
         self.transformer.load_state_dict(state_dict, strict=False)
-        self.transformer.wte.weight = self.lm_head.weight
+        self.transformer.wte.weight = self.lm_head.weight # Tying weights
+
+class GPT2LMHead():
+    pass

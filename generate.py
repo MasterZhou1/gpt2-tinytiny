@@ -9,10 +9,10 @@ from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
 model_type = 'pretrain' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'sft'
-start = "The white house is located in" # Can also specify a file, use as: "FILE:prompt.txt"
+start = 'Alice was friends with Bob. Alice went to visit her friend' # Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 5 # number of samples to draw
 max_new_tokens = 64 # number of tokens generated in each sample
-temperature = 0.9 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
+temperature = 1.2 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 200 # retain only the top_k most likely tokens, clamp others to have 0 probability
 seed = 1337
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
@@ -28,31 +28,34 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=device_type, dtype=ptdtype)
 
 # model loading
-def load_model(out_dir, model_file):
+def load_model(out_dir, model_file, model_type='pretrain'):
     ckpt_path = os.path.join(out_dir, model_file)
+    print(f'load model from {ckpt_path}')
     checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'], model_type='pretrain')
+    print(dict(**checkpoint['model_args']))
+    gptconf = GPTConfig(**checkpoint['model_args'], model_type=model_type)
     model = GPT(gptconf)
     state_dict = checkpoint['model']
     unwanted_prefix = '_orig_mod.'
     for k, v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    return state_dict, model
+    if model_type == 'pretrain':
+        model.load_state_dict(state_dict)
+    elif model_type == 'lora':
+        model.load_weight(state_dict)
+    return model
 
 # init from a model saved in a specific directory
 if model_type == 'pretrain':
     out_dir = 'out'
-    state_dict, model = load_model(out_dir, 'ckpt.pt')
-    model.load_state_dict(state_dict)
+    model = load_model(out_dir, 'ckpt.pt')
 elif model_type == 'sft':
     out_dir = './out/sft'
-    state_dict, model = load_model(out_dir, 'ckpt_sft.pt')
-    model.load_weight(state_dict)
+    model = load_model(out_dir, 'ckpt_sft.pt')
 elif model_type == 'lora':
     out_dir = './out/sft'
-    state_dict, model = load_model(out_dir, 'ckpt_pretrain.pt')
-    model.load_weight(state_dict)
+    model = load_model(out_dir, 'ckpt_pretrain.pt', model_type)
     lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft_lora.pt')
     lora_w = torch.load(lora_ckpt_path, map_location=device)
     model.load_state_dict(lora_w, strict=False)

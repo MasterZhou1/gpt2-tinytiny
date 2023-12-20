@@ -8,7 +8,7 @@ This is a course final project for ESE5460 Principals of Deep Learning in Univer
 Currently we implement and finish the pretrian part of GPT2-tinytiny.
 
 Future works:
-- SFT is still going on with some issues.
+- LoRA and SFT is still going on with some issues.
 
 Main References: 
 

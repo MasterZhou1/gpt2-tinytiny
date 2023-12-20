@@ -1,4 +1,6 @@
 # gpt2-tinytiny
+[Final Report](gpt2_tinytiny.pdf)
+
 Learning the gpt2 structure from scratch.
 
 This is a course final project for ESE5460 Principals of Deep Learning in University of Pennsylvania.
@@ -14,4 +16,3 @@ model: https://github.com/karpathy/nanoGPT/tree/master
 
 data: https://huggingface.co/datasets/wikitext
 
-[Report](gpt2_tinytiny.pdf)

@@ -13,3 +13,5 @@ Main References:
 model: https://github.com/karpathy/nanoGPT/tree/master
 
 data: https://huggingface.co/datasets/wikitext
+
+[Report](gpt2_tinytiny.pdf)

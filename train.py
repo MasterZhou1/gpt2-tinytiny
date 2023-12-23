@@ -3,11 +3,10 @@ from model import GPT, GPTConfig
 import os
 from contextlib import nullcontext
 import time
-import math
+from utils import get_batch, estimate_loss, load_model, get_lr_cosine_annealing
 
 out_dir = './out'
 # Create the directory if it doesn't exist
-model_type = 'pretrain' # pretrain or lora
 os.makedirs(out_dir, exist_ok=True)
 eval_interval = 100
 log_interval = 1
@@ -16,7 +15,7 @@ eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 init_from = 'resume'  # 'scratch' or 'resume'
 # wandb logging
-wandb_log = True  # disabled by default
+wandb_log = False  # disabled by default
 wandb_project = 'gpt2-wikitext'
 wandb_run_name = f'gpt2 {time.time()}'  # 'run' + str(time.time())
 # data
@@ -59,24 +58,13 @@ ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=devi
 train_data = torch.load('./data/train_data.pt')
 validation_data = torch.load('./data/validation_data.pt')
 
-
-def get_batch(split):
-    data = train_data if split == 'train' else validation_data
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i + block_size].to(torch.long) for i in ix])
-    y = torch.stack([data[i + 1:i + 1 + block_size].to(torch.long) for i in ix])
-    # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
-    x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
-    return x, y
-
-
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=50304, dropout=dropout)  # start with model_args from command line
+                  bias=bias, vocab_size=None, dropout=dropout)  # start with model_args from command line
 
 if init_from == 'scratch':
     # init a new model from scratch
@@ -88,24 +76,7 @@ if init_from == 'scratch':
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
-    checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
-    # create the model
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    # fix the keys of the state dictionary :(
-    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
+    model, checkpoint, model_args = load_model(out_dir, 'ckpt.pt', model_args)
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
 
@@ -125,38 +96,6 @@ if init_from == 'resume':
 checkpoint = None  # free up memory
 
 
-# helps estimate an arbitrarily accurate loss over either split using many batches
-@torch.no_grad()
-def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            with ctx:
-                logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
-
-
-# learning rate decay scheduler (cosine with warmup)
-def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_iters:
-        return learning_rate * it / warmup_iters
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > lr_decay_iters:
-        return min_lr
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
-    return min_lr + coeff * (learning_rate - min_lr)
-
-
 # logging
 if wandb_log:
     import wandb
@@ -165,20 +104,20 @@ if wandb_log:
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
-X, Y = get_batch('train')  # fetch the very first batch
+X, Y = get_batch('train', train_data, validation_data, batch_size, block_size, device)  # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0  # number of iterations in the lifetime of this process
 running_mfu = -1.0
 while True:
 
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = get_lr_cosine_annealing(iter_num, learning_rate, min_lr, warmup_iters, lr_decay_iters) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0:
-        losses = estimate_loss()
+        losses = estimate_loss(model, ctx, eval_iters, train_data, validation_data, batch_size, block_size, device)
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log:
             wandb.log({
@@ -211,7 +150,7 @@ while True:
             logits, loss = model(X, Y)
             loss = loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        X, Y = get_batch('train')
+        X, Y = get_batch('train', train_data, validation_data, batch_size, block_size, device)
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
     # clip the gradient

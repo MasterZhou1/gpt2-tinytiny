@@ -1,15 +1,14 @@
 import torch
-from torch.utils.data import random_split
 import loralib as lora
-from model import GPT, GPTConfig
 import os
 from contextlib import nullcontext
 import time
-import math
+from utils import get_batch, estimate_loss, load_model, get_lr_cosine_annealing
 
-model_type = 'pretrain'  # pretrain or lora
+
+finetune_type = 'retrain_all'  # retrain_all or lora
 out_dir = './out/sft'
-init_from = 'sft_resume'  # sft_scratch or sft_resume
+init_from = 'sft_scratch'  # sft_scratch or sft_resume
 # Create the directory if it doesn't exist
 os.makedirs(out_dir, exist_ok=True)
 eval_interval = 100
@@ -18,8 +17,8 @@ eval_iters = 200
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 # wandb logging
-wandb_log = True  # disabled by default
-wandb_project = 'gpt2-Tulu-sft'
+wandb_log = False  # disabled by default
+wandb_project = 'gpt2-sft'
 wandb_run_name = f'gpt2 sft {time.time()}'  # 'run' + str(time.time())
 # data
 gradient_accumulation_steps = 5 * 8  # used to simulate larger batch sizes
@@ -31,18 +30,18 @@ n_head = 4
 n_embd = 384
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
-lora_attn_dim = 32  # lora attn dimension
-lora_attn_alpha = 64  # lora attn alpha
-lora_dropout = 0.0  # dropout probability for lora layers
+lora_attn_dim = 4  # lora attn dimension
+lora_attn_alpha = 32  # lora attn alpha
+lora_dropout = 0.01  # dropout probability for lora layers
 # adamw optimizer
 learning_rate = 6e-4  # max learning rate
-max_iters = 20000  # total number of training iterations
+max_iters = 1000  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
-decay_lr = True  # whether to decay the learning rate
+decay_lr = False  # whether to decay the learning rate
 warmup_iters = 700  # how many steps to warm up for
 lr_decay_iters = 20000  # should be ~= max_iters per Chinchilla
 min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
@@ -61,64 +60,15 @@ device_type = 'cuda' if 'cuda' in device else 'cpu'  # for later use in torch.au
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=device_type, dtype=ptdtype)
 
-sft_q = torch.load('./data/train_Q_sft.pt')
-sft_a = torch.load('./data/train_A_sft.pt')
-print(f'sft data total {len(sft_q)} QA pairs')
-# Define the size of the validation set
-val_size = int(0.05 * len(sft_q))
-train_size = len(sft_q) - val_size
-# Use random_split to split the dataset
-sft_data = list(zip(sft_q, sft_a))
-sft_train, sft_validation = random_split(sft_data, [train_size, val_size])
-# Unzip the datasets to get q and a
-sft_train_q, sft_train_a = zip(*sft_train)
-sft_validation_q, sft_validation_a = zip(*sft_validation)
 
+train_data = torch.load('./data/train_data.pt')
+validation_data = torch.load('./data/validation_data.pt')
 
-def get_batch(split):
-    q = sft_train_q if split == 'train' else sft_validation_q
-    a = sft_train_a if split == 'train' else sft_validation_a
-    ix = torch.randint(len(q), (batch_size,))
-    x = torch.stack([q[i].to(torch.long) for i in ix])
-    y = torch.stack([a[i].to(torch.long) for i in ix])
-    # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
-    x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
-    return x, y
-
-
-print(f"SFT training from {out_dir}")
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                      bias=bias, vocab_size=50304, dropout=dropout)  # start with model_args from command line
-
-# loading pretrain gpt2 model
-def load_pretrain(out_dir, model_pretrain, model_type='pretrain'):
-
-    ckpt_path = os.path.join(out_dir, model_pretrain)
-    checkpoint = torch.load(ckpt_path, map_location='cpu')  # load from cpu, if load from gpu memo might exceed
-    checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
-    print(model_args)
-    # create the model
-    gptconf = GPTConfig(**model_args, model_type=model_type,
-                        lora_attn_dim=lora_attn_dim, lora_attn_alpha=lora_attn_alpha, lora_dropout=lora_dropout)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    # fix the keys of the state dictionary :(
-    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    if model_type == 'lora':
-        model.load_weight(state_dict)
-    elif model_type == 'pretrain':
-        model.load_state_dict(state_dict)
-    return model
+                      bias=bias, vocab_size=None, dropout=dropout,
+                  lora_attn_dim=lora_attn_dim, lora_attn_alpha=lora_attn_alpha, lora_dropout=lora_dropout)
 
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
@@ -126,37 +76,28 @@ iter_num = 0
 best_val_loss = 1e9
 
 if init_from == 'sft_scratch':
-    model = load_pretrain(out_dir, 'ckpt_pretrain.pt', model_type)
-elif init_from == 'sft_resume' and model_type == 'pretrain':
-    ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
-    checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
-    print(model_args)
-    gptconf = GPTConfig(**model_args, model_type=model_type)
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
-    iter_num = checkpoint['iter_num']
-    best_val_loss = checkpoint['best_val_loss']
-elif init_from == 'sft_resume' and model_type == 'lora':
-    model = load_pretrain(out_dir, 'ckpt_pretrain.pt', model_type)
-    lora_ckpt_path = os.path.join(out_dir, 'ckpt_sft.pt')
-    checkpoint = torch.load(lora_ckpt_path, map_location='cpu')
-    lora_w = checkpoint['model']
-    model.load_state_dict(lora_w, strict=False)
-    iter_num = checkpoint['iter_num']
-    best_val_loss = checkpoint['best_val_loss']
+    print(f"SFT from scratch with finetune type {finetune_type}")
+    if finetune_type == 'retrain_all':
+        model, _, model_args = load_model(out_dir, 'ckpt_pretrain.pt', model_args, 'pretrain')
+    elif finetune_type == 'lora':
+        model, _, model_args = load_model(out_dir, 'ckpt_pretrain.pt', model_args, 'lora')
+elif init_from == 'sft_resume':
+    print(f"Resuming training from {out_dir} with finetune type {finetune_type}")
+    if finetune_type == 'retrain_all': # better named retrain_all, could try tranfer learning
+        model, checkpoint, model_args = load_model(out_dir, 'ckpt_sft.pt', model_args, 'pretrain')
+        iter_num = checkpoint['iter_num']
+        best_val_loss = checkpoint['best_val_loss']
+    elif finetune_type == 'lora':
+        model, _, model_args = load_model(out_dir, 'ckpt_pretrain.pt', model_args, 'lora')
+        lora_ckpt_path = os.path.join(out_dir, 'ckpt_lora.pt')
+        checkpoint = torch.load(lora_ckpt_path, map_location='cpu')
+        lora_w = checkpoint['model']
+        model.load_state_dict(lora_w, strict=False)
+        iter_num = checkpoint['iter_num']
+        best_val_loss = checkpoint['best_val_loss']
 
 model.to(device)
-if lora_attn_dim > 0 and model_type == 'lora':
+if lora_attn_dim > 0 and finetune_type == 'lora':
     lora.mark_only_lora_as_trainable(model)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -164,38 +105,6 @@ scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-
-
-# helps estimate an arbitrarily accurate loss over either split using many batches
-@torch.no_grad()
-def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            with ctx:
-                logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
-
-
-# learning rate decay scheduler (cosine with warmup)
-def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_iters:
-        return learning_rate * it / warmup_iters
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > lr_decay_iters:
-        return min_lr
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
-    return min_lr + coeff * (learning_rate - min_lr)
 
 
 # logging
@@ -206,20 +115,20 @@ if wandb_log:
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
-X, Y = get_batch('train')  # fetch the very first batch
+X, Y = get_batch('train', train_data, validation_data, batch_size, block_size, device)  # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0  # number of iterations in the lifetime of this process
 running_mfu = -1.0
 while True:
 
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = get_lr_cosine_annealing(iter_num, learning_rate, min_lr, warmup_iters, lr_decay_iters) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0:
-        losses = estimate_loss()
+        losses = estimate_loss(model, ctx, eval_iters, train_data, validation_data, batch_size, block_size, device)
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log:
             wandb.log({
@@ -233,7 +142,7 @@ while True:
             best_val_loss = losses['val']
             if iter_num > 0:
                 checkpoint = {
-                    'model': model.state_dict() if model_type == 'pretrain' else lora.lora_state_dict(model),
+                    'model': model.state_dict() if finetune_type == 'retrain_all' else lora.lora_state_dict(model),
                     'optimizer': optimizer.state_dict(),
                     'model_args': model_args,
                     'iter_num': iter_num,
@@ -241,7 +150,9 @@ while True:
                     'config': config,
                 }
                 print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt_sft.pt'))
+                torch.save(checkpoint, os.path.join(out_dir, 'ckpt_sft.pt'
+                                                    if finetune_type == 'retrain_all' else 'ckpt_lora.pt'))
+
 
     if iter_num == 0 and eval_only:
         break
@@ -253,7 +164,7 @@ while True:
             logits, loss = model(X, Y)
             loss = loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        X, Y = get_batch('train')
+        X, Y = get_batch('train', train_data, validation_data, batch_size, block_size, device)
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
     # clip the gradient

@@ -30,12 +30,12 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0, 'n_embd must be divisible by n_head'
         # key, query, value projections for all heads, but in a batch
 
-        # vanilla version of calculating attention q,k,v
+        # vanilla version of define q,k,v in attention
         if config.model_type == 'pretrain':
             self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
 
         elif config.model_type == 'lora':
-            # use lora to do so
+            # use lora to define q,k,v
             self.c_attn = lora.MergedLinear(
                 config.n_embd, 3 * config.n_embd,
                 r=config.lora_attn_dim,
@@ -154,8 +154,8 @@ class GPT(nn.Module):
         # This behavior is deprecated and will be an error in future versions"
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
 
-        # Weight Tying trick
-        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+        # Weight Tying trick. wte and lm_head weights are set to same thereafter through out the training process
+        self.lm_head.weight = self.transformer.wte.weight # https://paperswithcode.com/method/weight-tying
 
         # init all weights
         self.apply(self._init_weights)
@@ -294,7 +294,7 @@ class GPT(nn.Module):
         return mfu
 
     def load_weight(self, state_dict):
-        # only load the transformer part of model not LMHead, which  needs to be replaced and finetuned
+        # load weight when using lora
         if 'model_state_dict' in state_dict:
             state_dict = state_dict['model_state_dict']
 
@@ -303,15 +303,9 @@ class GPT(nn.Module):
         new_keys = []
         for key in state_dict_tmp:
             new_key = None
-            if key.endswith(".g"):
-                new_key = key[:-2] + ".weight"
-            elif key.endswith(".b"):
-                new_key = key[:-2] + ".bias"
-            elif key.endswith(".w"):
-                new_key = key[:-2] + ".weight"
 
-            if key.startswith("module.transformer."):
-                new_key = key[len("module.transformer."):]
+            if key.startswith("transformer."):
+                new_key = key[len("transformer."):]
 
             if new_key:
                 old_keys.append(key)
@@ -320,12 +314,17 @@ class GPT(nn.Module):
         for old_key, new_key in zip(old_keys, new_keys):
             state_dict[new_key] = state_dict.pop(old_key)
 
+        # need to transpose c_attn layer cuz lora and our vanilla c_attn have a transpose relationship
+        for n, p in state_dict.items():
+            if n.endswith(".c_attn.weight"):
+                state_dict[n] = p.T
+
         for n, p in self.transformer.named_parameters():
             if n not in state_dict:
                 state_dict[n] = p
 
         self.transformer.load_state_dict(state_dict, strict=False)
-        self.transformer.wte.weight = self.lm_head.weight # Tying weights
+        self.lm_head.weight = self.transformer.wte.weight  # load lm_head using tying weight
 
 class GPT2LMHead():
     pass

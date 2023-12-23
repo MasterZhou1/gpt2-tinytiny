@@ -160,3 +160,4 @@ cython_debug/
 *.log
 *.pt
 *.json
+*.txt

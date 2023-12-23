@@ -58,7 +58,8 @@ def preprocess_and_save_sft(dataset, tokenizer, block_size, save_name, save_path
             if len(input_ids) > block_size:
                 # Skip this example or could try truncate
                 break
-            elif len(input_ids) < block_size:
+            elif len(input_ids) < block_size: # ugly and silly, huggingface tokenizer already implemented this pad and truncation
+                # just see the example of tokenizer website
                 # padding ids to block_size with 50303, which is the ignore_index set in cross entropy loss
                 num_pads = block_size - len(input_ids)
                 input_ids = F.pad(input_ids, (0, num_pads), value=50303)
@@ -100,16 +101,16 @@ if __name__ == '__main__':
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
     # load pretrain dataset
-    # dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
-    #
-    # # Access the splits
-    # train_data = dataset['train']
-    # validation_data = dataset['validation']
-    # test_data = dataset['test']
-    #
-    # preprocess_and_save(validation_data, tokenizer, save_name='validation_data')
-    # preprocess_and_save(test_data, tokenizer, save_name='test_data')
-    # preprocess_and_save(train_data, tokenizer, save_name='train_data')
+    dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+
+    # Access the splits
+    train_data = dataset['train']
+    validation_data = dataset['validation']
+    test_data = dataset['test']
+
+    preprocess_and_save(validation_data, tokenizer, save_name='validation_data')
+    preprocess_and_save(test_data, tokenizer, save_name='test_data')
+    preprocess_and_save(train_data, tokenizer, save_name='train_data')
 
     # load sft dataset
     dataset = load_dataset("arazd/tulu_cot")
@@ -117,4 +118,4 @@ if __name__ == '__main__':
     # Access the splits
     sft_data = dataset['train']
 
-    preprocess_and_save_sft(sft_data, tokenizer, block_size=256, save_name='train')
+    # preprocess_and_save_sft(sft_data, tokenizer, block_size=256, save_name='train')

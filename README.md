@@ -16,3 +16,5 @@ model: https://github.com/karpathy/nanoGPT/tree/master
 
 data: https://huggingface.co/datasets/wikitext
 
+how chatgpt works: https://www.assemblyai.com/blog/how-chatgpt-actually-works/
+

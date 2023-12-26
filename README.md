@@ -15,8 +15,10 @@ Your message here!
 <|assistant|>
 ```
 
-Include a newline '\n' after <|assistant|>, this will affect generation quality.
+Include a newline '\n' after <|assistant|>, this could affect generation quality.
 
+### Problems:
+- lora is worse than retrain_all, might because model is too small , so retrain_all will work better
 
 ### Main References: 
 

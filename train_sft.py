@@ -6,20 +6,20 @@ import time
 from utils import get_batch, estimate_loss, load_model, get_lr_cosine_annealing
 
 
-finetune_type = 'lora'  # retrain_all or lora
+finetune_type = 'retrain_all'  # retrain_all or lora
 out_dir = './out/sft'
-init_from = 'sft_scratch'  # sft_scratch or sft_resume
+init_from = 'sft_resume'  # sft_scratch or sft_resume
 # Create the directory if it doesn't exist
 os.makedirs(out_dir, exist_ok=True)
-eval_interval = 100
+eval_interval = 50
 log_interval = 1
-eval_iters = 200
+eval_iters = 50
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 # wandb logging
 wandb_log = True  # disabled by default
 wandb_project = 'gpt2-sft'
-wandb_run_name = f'gpt2 sft {time.time()}'  # 'run' + str(time.time())
+wandb_run_name = f'gpt2 sft {finetune_type} {time.time()}'  # 'run' + str(time.time())
 # data
 gradient_accumulation_steps = 5 * 8  # used to simulate larger batch sizes
 batch_size = 12  # if gradient_accumulation_steps > 1, this is the micro-batch size
@@ -28,23 +28,23 @@ block_size = 256
 n_layer = 4
 n_head = 4
 n_embd = 384
-dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
+dropout = 0.01  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
-lora_attn_dim = 16  # lora attn dimension
-lora_attn_alpha = 32  # lora attn alpha
+lora_attn_dim = 32  # lora attn dimension
+lora_attn_alpha = 64  # lora attn alpha
 lora_dropout = 0.0  # dropout probability for lora layers
 # adamw optimizer
-learning_rate = 6e-5  # max learning rate, set to be 0.1 * lr in pretrain
-max_iters = 5000  # total number of training iterations
+learning_rate = 3e-4  # max learning rate, set to be 0.5 * lr in pretrain
+max_iters = 300  # total number of training iterations, set to less than pretrain
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = False  # whether to decay the learning rate
-warmup_iters = 800  # how many steps to warm up for
-lr_decay_iters = 5000  # should be ~= max_iters per Chinchilla
-min_lr = 6e-6  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+warmup_iters = 400  # how many steps to warm up for
+lr_decay_iters = 2000  # should be ~= max_iters per Chinchilla
+min_lr = 3e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # system
 device = 'cuda'  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler

@@ -8,12 +8,13 @@ from transformers import GPT2Tokenizer
 from utils import load_model
 
 # -----------------------------------------------------------------------------
-model_type = 'pretrain' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'retrain_all'
-prompt = 'The capital of US is?'
+model_type = 'retrain_all' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'retrain_all'
+prompt = 'What does the Gambia women’s national football team represents?'
 start = f'<|user|>\n{prompt}\n<|assistant|>\n' # Can also specify a file, use as: "FILE:prompt.txt"
+# start = 'Alice was friends with Bob. Alice went to visit her friend'
 num_samples = 2 # number of samples to draw
 max_new_tokens = 64 # number of tokens generated in each sample
-temperature = 1.2 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
+temperature = 1.1 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 200 # retain only the top_k most likely tokens, clamp others to have 0 probability
 seed = 1337
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.

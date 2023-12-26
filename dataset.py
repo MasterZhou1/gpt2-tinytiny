@@ -5,7 +5,7 @@ import torch
 import time
 
 
-def preprocess_and_save(dataset, tokenizer, save_name, prompt_formatting, save_path='./data'):
+def preprocess_and_save(dataset, tokenizer, save_name, prompt_formatting, dataset_type, save_path='./data'):
     # Create the save folder if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
     t0 = time.time()
@@ -13,7 +13,7 @@ def preprocess_and_save(dataset, tokenizer, save_name, prompt_formatting, save_p
     processed_tensors = []
 
     for i, example in enumerate(dataset):
-        text = prompt_formatting(example)
+        text = prompt_formatting(example, dataset_type)
 
         # Encode the text
         # Vocabulary Size: 50257 << uint16=65535. However torch doesn't support unit16, so use int32 instead
@@ -35,11 +35,11 @@ def preprocess_and_save(dataset, tokenizer, save_name, prompt_formatting, save_p
     print(f'Process finished with {t1-t0:.3f} seconds.')
 
 
-def prompt_formatting(example):
-    if example.get('text') is not None:
+def prompt_formatting(example, dataset_type=None):
+    if dataset_type == 'wikitext103':
         # wikitext103 data: {..., 'text':...}
         return example['text']
-    else:
+    elif dataset_type == 'tulu':
         # tulu data: {...,'message':[{ "role": "user", "content":...}, { "role": "assistant", "content":...}]}
         text = ''
         for t in example['messages']:
@@ -47,6 +47,15 @@ def prompt_formatting(example):
                 text += f"<|user|>\n{t['content']}\n"
             elif t['role'] == 'assistant':
                 text += f"<|assistant|>\n{t['content']}\n"
+        return text
+    elif dataset_type == 'lima':
+        # tulu data: {...,'conversations':["...", "..."]}
+        text = ''
+        for i, t in enumerate(example['conversations']):
+            if i % 2 == 0:
+                text += f"<|user|>\n{t}\n"
+            else:
+                text += f"<|assistant|>\n{t}\n"
         return text
 
 if __name__ == '__main__':
@@ -61,12 +70,13 @@ if __name__ == '__main__':
     test_data = dataset['test']
     train_data = dataset['train']
 
-    # preprocess_and_save(validation_data, tokenizer, 'validation_data', prompt_formatting)
-    # preprocess_and_save(test_data, tokenizer, 'test_data', prompt_formatting)
-    # preprocess_and_save(train_data, tokenizer, 'train_data', prompt_formatting)
+    preprocess_and_save(validation_data, tokenizer, 'validation_data', prompt_formatting, 'wikitext103')
+    preprocess_and_save(test_data, tokenizer, 'test_data', prompt_formatting, 'wikitext103')
+    preprocess_and_save(train_data, tokenizer, 'train_data', prompt_formatting, 'wikitext103')
 
     # load sft dataset
-    dataset = load_dataset("arazd/tulu_gpt4_alpaca")
+    # dataset = load_dataset("arazd/tulu_cot") # remember to change dataset_type == 'tulu
+    dataset = load_dataset("./data/lima", cache_dir='./data/lima')
 
     validation_percentage = 0.05  # Adjust this based on your needs
     # Access the splits
@@ -74,6 +84,7 @@ if __name__ == '__main__':
 
     sft_train = sft_data['train']
     sft_validation = sft_data['test']
-    preprocess_and_save(sft_train, tokenizer, 'train_sft', prompt_formatting)
-    preprocess_and_save(sft_validation, tokenizer, 'validation_sft', prompt_formatting)
+    preprocess_and_save(sft_train, tokenizer, 'train_sft', prompt_formatting, 'lima')
+    preprocess_and_save(sft_validation, tokenizer, 'validation_sft', prompt_formatting, 'lima')
+
 

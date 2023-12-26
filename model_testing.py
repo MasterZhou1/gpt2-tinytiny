@@ -7,7 +7,7 @@ data_file = './data/train_sft.pt'
 
 train_data = torch.load(data_file)
 tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-ids_test = train_data[:10000]
+ids_test = train_data[-10000:]
 # print(ids_test)
 print(tokenizer.decode(ids_test, skip_special_tokens=True))
 print(len(train_data))

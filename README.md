@@ -1,20 +1,34 @@
 # gpt2-tinytiny
-[Final Report](gpt2_tinytiny.pdf)
+## [Final Report](gpt2_tinytiny.pdf)
 
 Learning the gpt2 structure from scratch.
 
 This is a course final project for ESE5460 Principals of Deep Learning in University of Pennsylvania.
 
-Currently we implement and finish the pretrian part of GPT2-tinytiny.
+We implement and finish the pretrian and supervised-finetuning (SFT) part of GPT2-tinytiny.
 
-Future works:
-- LoRA and SFT is still going on with some issues.
+### SFT format:
 
-Main References: 
+```
+<|user|>
+Your message here!
+<|assistant|>
+```
+
+Include a newline '\n' after <|assistant|>, this will affect generation quality.
+
+
+### Main References: 
 
 model: https://github.com/karpathy/nanoGPT/tree/master
 
-data: https://huggingface.co/datasets/wikitext
+Wikitext103 data: https://huggingface.co/datasets/wikitext
+
+Tulu data: https://huggingface.co/datasets/allenai/tulu-v2-sft-mixture
 
 how chatgpt works: https://www.assemblyai.com/blog/how-chatgpt-actually-works/
+
+SFT: https://cameronrwolfe.substack.com/p/understanding-and-using-supervised
+
+LLM course: https://stanford-cs324.github.io/winter2022/lectures/introduction/
 

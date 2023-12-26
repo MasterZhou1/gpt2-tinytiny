@@ -3,13 +3,14 @@ from transformers import GPT2Tokenizer
 from model import GPT, GPTConfig
 import time
 
+data_file = './data/train_sft.pt'
 
-# tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-
-# ids_test = train_data[:100]
+train_data = torch.load(data_file)
+tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+ids_test = train_data[:10000]
 # print(ids_test)
-# print(tokenizer.decode(ids_test, skip_special_tokens=True))
-# print(len(train_data))
+print(tokenizer.decode(ids_test, skip_special_tokens=True))
+print(len(train_data))
 
 # -----------------------------------------------------------------------------
 profile = False
@@ -42,7 +43,7 @@ gptconf = GPTConfig(
 
 # data loading init
 if real_data:
-    train_data = torch.load('./data/train_data.pt')
+    train_data = torch.load(data_file)
 
     def get_batch(split):
         data = train_data # note ignore split in benchmarking script
@@ -59,7 +60,7 @@ else:
 
 model = GPT(gptconf)
 model.to(device)
-optimizer = model.configure_optimizers(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), device_type=device_type)
+optimizer = model.configure_optimizers(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95))
 
 
 if profile:

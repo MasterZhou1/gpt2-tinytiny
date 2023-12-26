@@ -8,8 +8,9 @@ from transformers import GPT2Tokenizer
 from utils import load_model
 
 # -----------------------------------------------------------------------------
-model_type = 'lora' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'retrain_all'
-start = 'Cat is sitting on' # Can also specify a file, use as: "FILE:prompt.txt"
+model_type = 'pretrain' # the type of model used for generate new sentences. 'pretrain' or 'lora' or 'retrain_all'
+prompt = 'The capital of US is?'
+start = f'<|user|>\n{prompt}\n<|assistant|>\n' # Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 2 # number of samples to draw
 max_new_tokens = 64 # number of tokens generated in each sample
 temperature = 1.2 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
@@ -31,7 +32,7 @@ print(f'Complete sentence with model type {model_type}')
 # init from a model saved in a specific directory
 if model_type == 'pretrain':
     out_dir = 'out'
-    model, *_ = load_model(out_dir, 'ckpt.pt')
+    model, *_ = load_model(out_dir, 'ckpt.pt', model_type='pretrain')
 elif model_type == 'retrain_all':
     out_dir = './out/sft'
     model, *_ = load_model(out_dir, 'ckpt_sft.pt', model_type='pretrain')

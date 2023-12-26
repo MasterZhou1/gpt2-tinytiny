@@ -204,10 +204,7 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=50303)
-            # set ignore_index to 50303=vocab_size-1 with vocab_size=50304 used in model, which is larger than
-            # original GPT2 vocab_size 50257, so this would work.
-            # Can try other methods to handle padding issues like using mask
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
@@ -254,7 +251,7 @@ class GPT(nn.Module):
             if hasattr(block.attn, 'bias'):
                 block.attn.bias = block.attn.bias[:, :, :block_size, :block_size]
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(self, weight_decay, learning_rate, betas):
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
@@ -325,6 +322,3 @@ class GPT(nn.Module):
 
         self.transformer.load_state_dict(state_dict, strict=False)
         self.lm_head.weight = self.transformer.wte.weight  # load lm_head using tying weight
-
-class GPT2LMHead():
-    pass

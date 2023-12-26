@@ -2,10 +2,10 @@ from datasets import load_dataset
 from transformers import GPT2Tokenizer
 import os
 import torch
-import torch.nn.functional as F
 import time
 
-def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
+
+def preprocess_and_save(dataset, tokenizer, save_name, prompt_formatting, save_path='./data'):
     # Create the save folder if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
     t0 = time.time()
@@ -13,7 +13,7 @@ def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
     processed_tensors = []
 
     for i, example in enumerate(dataset):
-        text = example['text']
+        text = prompt_formatting(example)
 
         # Encode the text
         # Vocabulary Size: 50257 << uint16=65535. However torch doesn't support unit16, so use int32 instead
@@ -35,66 +35,19 @@ def preprocess_and_save(dataset, tokenizer, save_name, save_path='./data'):
     print(f'Process finished with {t1-t0:.3f} seconds.')
 
 
-def preprocess_and_save_sft(dataset, tokenizer, block_size, save_name, save_path='./data'):
-    # Create the save folder if it doesn't exist
-    os.makedirs(save_path, exist_ok=True)
-    t0 = time.time()
-
-    # Lists to store preprocessed Q and A tensors
-    q_tensors = []
-    a_tensors = []
-
-    for i, text in enumerate(dataset):
-        q_tokens = []
-        a_tokens = []
-        for example in text['messages']:
-            role = example['role']
-            content = example['content']
-
-            # Tokenize the content
-            input_ids = tokenizer.encode(content, return_tensors="pt").flatten().to(torch.int32)
-
-            # Check if the length exceeds block_size
-            if len(input_ids) > block_size:
-                # Skip this example or could try truncate
-                break
-            elif len(input_ids) < block_size: # ugly and silly, huggingface tokenizer already implemented this pad and truncation
-                # just see the example of tokenizer website
-                # padding ids to block_size with 50303, which is the ignore_index set in cross entropy loss
-                num_pads = block_size - len(input_ids)
-                input_ids = F.pad(input_ids, (0, num_pads), value=50303)
-
-            # Decide whether the example is a question (Q) or an answer (A)
-            if role == "user":
-                q_tokens.append(input_ids)
-            elif role == "assistant":
-                a_tokens.append(input_ids)
-
-        # Append tokens to the main lists
-        if q_tokens and a_tokens:
-            assert (len(q_tokens[0]) == block_size) and  (len(a_tokens[0]) == block_size), \
-                f'Q {len(q_tokens[0])} and A {len(a_tokens[0])} length didn\'t match block size'
-            q_tensors.extend(q_tokens)
-            a_tensors.extend(a_tokens)
-
-        if i % 5000 == 0:
-            print(f'[{i}/{len(dataset)}] processed.')
-            # Print the number of examples for questions and answers
-            # print(f'Number of examples for questions: {len(q_tensors)}')
-            # print(f'Number of examples for answers: {len(a_tensors)}')
-
-    assert len(q_tensors) == len(a_tensors), \
-        f'Q {len(q_tensors)} and A {len(a_tensors)} length didn\'t match'
-
-    # Save the final tensors to files
-    q_save_file_path = os.path.join(save_path, f'{save_name}_Q_sft.pt')
-    a_save_file_path = os.path.join(save_path, f'{save_name}_A_sft.pt')
-
-    torch.save(q_tensors, q_save_file_path)
-    torch.save(a_tensors, a_save_file_path)
-
-    t1 = time.time()
-    print(f'Process finished with {t1 - t0:.3f} seconds.')
+def prompt_formatting(example):
+    if example.get('text') is not None:
+        # wikitext103 data: {..., 'text':...}
+        return example['text']
+    else:
+        # tulu data: {...,'message':[{ "role": "user", "content":...}, { "role": "assistant", "content":...}]}
+        text = ''
+        for t in example['messages']:
+            if t['role'] == 'user':
+                text += f"<|user|>\n{t['content']}\n"
+            elif t['role'] == 'assistant':
+                text += f"<|assistant|>\n{t['content']}\n"
+        return text
 
 if __name__ == '__main__':
     # Load the GPT-2 tokenizer and model
@@ -104,18 +57,23 @@ if __name__ == '__main__':
     dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
 
     # Access the splits
-    train_data = dataset['train']
     validation_data = dataset['validation']
     test_data = dataset['test']
+    train_data = dataset['train']
 
-    preprocess_and_save(validation_data, tokenizer, save_name='validation_data')
-    preprocess_and_save(test_data, tokenizer, save_name='test_data')
-    preprocess_and_save(train_data, tokenizer, save_name='train_data')
+    # preprocess_and_save(validation_data, tokenizer, 'validation_data', prompt_formatting)
+    # preprocess_and_save(test_data, tokenizer, 'test_data', prompt_formatting)
+    # preprocess_and_save(train_data, tokenizer, 'train_data', prompt_formatting)
 
     # load sft dataset
-    dataset = load_dataset("arazd/tulu_cot")
+    dataset = load_dataset("arazd/tulu_gpt4_alpaca")
 
+    validation_percentage = 0.05  # Adjust this based on your needs
     # Access the splits
-    sft_data = dataset['train']
+    sft_data = dataset['train'].train_test_split(test_size=validation_percentage)
 
-    # preprocess_and_save_sft(sft_data, tokenizer, block_size=256, save_name='train')
+    sft_train = sft_data['train']
+    sft_validation = sft_data['test']
+    preprocess_and_save(sft_train, tokenizer, 'train_sft', prompt_formatting)
+    preprocess_and_save(sft_validation, tokenizer, 'validation_sft', prompt_formatting)
+

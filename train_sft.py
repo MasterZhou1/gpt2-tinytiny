@@ -6,7 +6,7 @@ import time
 from utils import get_batch, estimate_loss, load_model, get_lr_cosine_annealing
 
 
-finetune_type = 'retrain_all'  # retrain_all or lora
+finetune_type = 'lora'  # retrain_all or lora
 out_dir = './out/sft'
 init_from = 'sft_scratch'  # sft_scratch or sft_resume
 # Create the directory if it doesn't exist
@@ -17,7 +17,7 @@ eval_iters = 200
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 # wandb logging
-wandb_log = False  # disabled by default
+wandb_log = True  # disabled by default
 wandb_project = 'gpt2-sft'
 wandb_run_name = f'gpt2 sft {time.time()}'  # 'run' + str(time.time())
 # data
@@ -30,21 +30,21 @@ n_head = 4
 n_embd = 384
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
-lora_attn_dim = 4  # lora attn dimension
+lora_attn_dim = 16  # lora attn dimension
 lora_attn_alpha = 32  # lora attn alpha
-lora_dropout = 0.01  # dropout probability for lora layers
+lora_dropout = 0.0  # dropout probability for lora layers
 # adamw optimizer
-learning_rate = 6e-4  # max learning rate
-max_iters = 1000  # total number of training iterations
+learning_rate = 6e-5  # max learning rate, set to be 0.1 * lr in pretrain
+max_iters = 5000  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = False  # whether to decay the learning rate
-warmup_iters = 700  # how many steps to warm up for
-lr_decay_iters = 20000  # should be ~= max_iters per Chinchilla
-min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+warmup_iters = 800  # how many steps to warm up for
+lr_decay_iters = 5000  # should be ~= max_iters per Chinchilla
+min_lr = 6e-6  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # system
 device = 'cuda'  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
@@ -61,9 +61,8 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.autocast(device_type=device_type, dtype=ptdtype)
 
 
-train_data = torch.load('./data/train_data.pt')
-validation_data = torch.load('./data/validation_data.pt')
-
+train_data = torch.load('./data/train_sft.pt')
+validation_data = torch.load('./data/validation_sft.pt')
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
@@ -104,8 +103,10 @@ if lora_attn_dim > 0 and finetune_type == 'lora':
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
-optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-
+optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2))
+if init_from == 'sft_resume':
+    optimizer.load_state_dict(checkpoint['optimizer'])
+checkpoint = None  # free up memory
 
 # logging
 if wandb_log:

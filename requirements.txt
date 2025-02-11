@@ -1,4 +1,4 @@
 datasets==2.15.0
 loralib==0.1.2
 torch==1.10.2+cu111
-transformers==4.36.0
+transformers==4.48.0
